@@ -1,5 +1,5 @@
 // force the compiler to show a warning to confirm that this file is included
-#warning **** Included USERMOD_BME280 version 2.0 ****
+// #warning **** Included USERMOD_BME280 version 2.0 ****
 
 #ifndef WLED_ENABLE_MQTT
 #error "This user mod requires MQTT to be enabled."
@@ -15,25 +15,33 @@
 class UsermodBME280 : public Usermod
 {
 private:
-  
   // NOTE: Do not implement any compile-time variables, anything the user needs to configure
   // should be configurable from the Usermod menu using the methods below
   // key settings set via usermod menu
-  uint8_t  TemperatureDecimals = 0;  // Number of decimal places in published temperaure values
-  uint8_t  HumidityDecimals = 0;    // Number of decimal places in published humidity values
-  uint8_t  PressureDecimals = 0;    // Number of decimal places in published pressure values
-  uint16_t TemperatureInterval = 5; // Interval to measure temperature (and humidity, dew point if available) in seconds
-  uint16_t PressureInterval = 300;  // Interval to measure pressure in seconds
-  BME280I2C::I2CAddr I2CAddress = BME280I2C::I2CAddr_0x76;  // i2c address, defaults to 0x76
-  bool PublishAlways = false;             // Publish values even when they have not changed
-  bool UseCelsius = true;                 // Use Celsius for Reporting
-  bool HomeAssistantDiscovery = false;    // Publish Home Assistant Device Information
+  uint8_t TemperatureDecimals = 0;                         // Number of decimal places in published temperaure values
+  uint8_t HumidityDecimals = 0;                            // Number of decimal places in published humidity values
+  uint8_t PressureDecimals = 0;                            // Number of decimal places in published pressure values
+  uint16_t TemperatureInterval = 5;                        // Interval to measure temperature (and humidity, dew point if available) in seconds
+  uint16_t PressureInterval = 300;                         // Interval to measure pressure in seconds
+  BME280I2C::I2CAddr I2CAddress = BME280I2C::I2CAddr_0x76; // i2c address, defaults to 0x76
+  bool PublishAlways = false;                              // Publish values even when they have not changed
+  bool UseCelsius = true;                                  // Use Celsius for Reporting
+  bool HomeAssistantDiscovery = false;                     // Publish Home Assistant Device Information
   bool enabled = true;
+  // Daro Mod Begin
+  bool SendSerialMessages = false;         // Log to serial port?
+  bool OverTempSutdownEnbled = false;      // Turn off WLED at temperature?
+  bool ThermalShutdownTriggered = false;   // Is true only if temp exceeded ShutDownTemp while brightness was > 0
+  bool ThermalShutdownPhaseActive = false; // Set to true if the device is currently in a shut down phase. If not, we don't want to turn the lights back on here.
+  bool TurnOnAfterCooling = false;         // Set to true if the device should turn back on after cooling down.
+  uint8_t ShutDownTemp = 55;               // The temperature to shut WLED down
+  uint8_t SwitchHysteresis = 3;            // The temperature offset to turn wled WLED back on
+  // Daro Mod End
 
-  // set the default pins based on the architecture, these get overridden by Usermod menu settings
-  #ifdef ESP8266
-    //uint8_t RST_PIN = 16; // Un-comment for Heltec WiFi-Kit-8
-  #endif
+// set the default pins based on the architecture, these get overridden by Usermod menu settings
+#ifdef ESP8266
+                                // uint8_t RST_PIN = 16; // Un-comment for Heltec WiFi-Kit-8
+#endif
   bool initDone = false;
 
   BME280I2C bme;
@@ -71,7 +79,8 @@ private:
   {
     float _temperature, _humidity, _pressure;
 
-    if (UseCelsius) {
+    if (UseCelsius)
+    {
       BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
       EnvironmentCalculations::TempUnit envTempUnit(EnvironmentCalculations::TempUnit_Celsius);
       BME280::PresUnit presUnit(BME280::PresUnit_hPa);
@@ -87,7 +96,9 @@ private:
         sensorHeatIndex = EnvironmentCalculations::HeatIndex(_temperature, _humidity, envTempUnit);
         sensorDewPoint = EnvironmentCalculations::DewPoint(_temperature, _humidity, envTempUnit);
       }
-    } else {
+    }
+    else
+    {
       BME280::TempUnit tempUnit(BME280::TempUnit_Fahrenheit);
       EnvironmentCalculations::TempUnit envTempUnit(EnvironmentCalculations::TempUnit_Fahrenheit);
       BME280::PresUnit presUnit(BME280::PresUnit_hPa);
@@ -106,7 +117,7 @@ private:
     }
   }
 
-  // Procedure to define all MQTT discovery Topics 
+  // Procedure to define all MQTT discovery Topics
   void _mqttInitialize()
   {
     char mqttTemperatureTopic[128];
@@ -120,7 +131,8 @@ private:
     snprintf_P(mqttHeatIndexTopic, 127, PSTR("%s/heat_index"), mqttDeviceTopic);
     snprintf_P(mqttDewPointTopic, 127, PSTR("%s/dew_point"), mqttDeviceTopic);
 
-    if (HomeAssistantDiscovery) {
+    if (HomeAssistantDiscovery)
+    {
       _createMqttSensor(F("Temperature"), mqttTemperatureTopic, "temperature", tempScale);
       _createMqttSensor(F("Pressure"), mqttPressureTopic, "pressure", F("hPa"));
       _createMqttSensor(F("Humidity"), mqttHumidityTopic, "humidity", F("%"));
@@ -133,9 +145,9 @@ private:
   void _createMqttSensor(const String &name, const String &topic, const String &deviceClass, const String &unitOfMeasurement)
   {
     String t = String(F("homeassistant/sensor/")) + mqttClientID + F("/") + name + F("/config");
-    
+
     StaticJsonDocument<600> doc;
-    
+
     doc[F("name")] = String(serverDescription) + " " + name;
     doc[F("state_topic")] = topic;
     doc[F("unique_id")] = String(mqttClientID) + name;
@@ -160,66 +172,81 @@ private:
     mqtt->publish(t.c_str(), 0, true, temp.c_str());
   }
 
-    void publishMqtt(const char *topic, const char* state) {
-      //Check if MQTT Connected, otherwise it will crash the 8266
-      if (WLED_MQTT_CONNECTED){
-        char subuf[128];
-        snprintf_P(subuf, 127, PSTR("%s/%s"), mqttDeviceTopic, topic);
-        mqtt->publish(subuf, 0, false, state);
-      }
-    }
-
-    void initializeBmeComms()
+  void publishMqtt(const char *topic, const char *state)
+  {
+    // Check if MQTT Connected, otherwise it will crash the 8266
+    if (WLED_MQTT_CONNECTED)
     {
-      BME280I2C::Settings settings{
-            BME280::OSR_X16,    // Temperature oversampling x16
-            BME280::OSR_X16,    // Humidity oversampling x16
-            BME280::OSR_X16,    // Pressure oversampling x16
-            BME280::Mode_Forced,
-            BME280::StandbyTime_1000ms,
-            BME280::Filter_Off,
-            BME280::SpiEnable_False,
-            I2CAddress
-        };
+      char subuf[128];
+      snprintf_P(subuf, 127, PSTR("%s/%s"), mqttDeviceTopic, topic);
+      mqtt->publish(subuf, 0, false, state);
+    }
+  }
 
-      bme.setSettings(settings);
-      
-      if (!bme.begin())
+  void initializeBmeComms()
+  {
+    BME280I2C::Settings settings{
+        BME280::OSR_X16, // Temperature oversampling x16
+        BME280::OSR_X16, // Humidity oversampling x16
+        BME280::OSR_X16, // Pressure oversampling x16
+        BME280::Mode_Forced,
+        BME280::StandbyTime_1000ms,
+        BME280::Filter_Off,
+        BME280::SpiEnable_False,
+        I2CAddress};
+
+    bme.setSettings(settings);
+
+    if (!bme.begin())
+    {
+      sensorType = 0;
+      DEBUG_PRINTLN(F("Could not find BME280 I2C sensor!"));
+    }
+    else
+    {
+      switch (bme.chipModel())
       {
+      case BME280::ChipModel_BME280:
+        sensorType = 1;
+        DEBUG_PRINTLN(F("Found BME280 sensor! Success."));
+        break;
+      case BME280::ChipModel_BMP280:
+        sensorType = 2;
+        DEBUG_PRINTLN(F("Found BMP280 sensor! No Humidity available."));
+        break;
+      default:
         sensorType = 0;
-        DEBUG_PRINTLN(F("Could not find BME280 I2C sensor!"));
-      }
-      else
-      {
-        switch (bme.chipModel())
-        {
-        case BME280::ChipModel_BME280:
-          sensorType = 1;
-          DEBUG_PRINTLN(F("Found BME280 sensor! Success."));
-          break;
-        case BME280::ChipModel_BMP280:
-          sensorType = 2;
-          DEBUG_PRINTLN(F("Found BMP280 sensor! No Humidity available."));
-          break;
-        default:
-          sensorType = 0;
-          DEBUG_PRINTLN(F("Found UNKNOWN sensor! Error!"));
-        }
+        DEBUG_PRINTLN(F("Found UNKNOWN sensor! Error!"));
       }
     }
+  }
 
 public:
   void setup()
   {
-    if (i2c_scl<0 || i2c_sda<0) { enabled = false; sensorType = 0; return; }
-    
+    if (i2c_scl < 0 || i2c_sda < 0)
+    {
+      enabled = false;
+      sensorType = 0;
+      return;
+    }
+    // Daro Mod Begin
+    if (SendSerialMessages)
+    {
+      Serial.begin(115200);
+      Serial.println("Setup() Initializing...");
+      Serial.println(OverTempSutdownEnbled ? "Setup() Over Temp Shutdown Enabled" : "Setup() Over Temp Shutdown Disabled");
+      Serial.println(ThermalShutdownTriggered ? "Setup() ERROR? Thermal Shutdown has been triggered" : "Setup() Thermal Shutdown has not been triggered");
+    }
+    // Daro Mod End
     initializeBmeComms();
     initDone = true;
   }
 
   void loop()
   {
-    if (!enabled || strip.isUpdating()) return;
+    if (!enabled || strip.isUpdating())
+      return;
 
     // BME280 sensor MQTT publishing
     // Check if sensor present and Connected, otherwise it will crash the MCU
@@ -236,6 +263,87 @@ public:
 
         float temperature = roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
         float humidity, heatIndex, dewPoint;
+        // Daro Mod Begin
+        if (SendSerialMessages)
+        {
+          Serial.println("Loop(1) Checking for temp events.");
+          OverTempSutdownEnbled ? Serial.println("Loop(2) Over Temp Shutdown Enabled") : Serial.println("Loop(2) Over Temp Shutdown Disabled");
+          OverTempSutdownEnbled ? Serial.print("Loop(Values) Shutdown Temperature set to: ") : Serial.println("");
+          OverTempSutdownEnbled ? Serial.println((ShutDownTemp)) : Serial.println("");
+          Serial.print("Loop(Values) The hysteresis set to: ");
+          Serial.println(SwitchHysteresis);
+          ThermalShutdownTriggered ? Serial.print("Loop(Values) Thermal Shutdown has been triggered. The temperature is: ") : Serial.print("Loop(Values) Thermal Shutdown has not been triggered. The temperature is: ");
+          Serial.println(temperature);
+          ThermalShutdownPhaseActive ? Serial.println("Loop(Values) Thermal Shutdown Phase is ACTIVE.") : Serial.println("Loop(Values) Thermal Shutdown Phase is NOT active.");
+        }
+        //only enter if enabled
+        if (OverTempSutdownEnbled)
+        {
+          if (SendSerialMessages)
+          {
+            Serial.print(F("Loop(3) OverTempSutdownEnbled - The temp is: "));
+            Serial.println((temperature));
+          }
+          //Regardless of other circumstances, turn the LEDs off if the tepmerature is too high!
+          if (temperature >= ShutDownTemp)
+          {
+            //It's too hot. Set the variable to true.
+            ThermalShutdownTriggered = true;
+            if (SendSerialMessages)
+            {
+              Serial.print("Loop(4) ThermalShutdownTriggered - Shutdown triggered. offMode is: ");
+              offMode == true ? Serial.println("True") : Serial.println("False");
+            }
+            // only toggle the power state, if the lights are on!
+            if (!offMode)
+            {
+              ThermalShutdownPhaseActive = true;
+              toggleOnOff();
+              stateUpdated(CALL_MODE_BUTTON);
+              updateInterfaces(CALL_MODE_BUTTON);
+            }
+            // offMode=true;
+            if (SendSerialMessages)
+            {
+              Serial.print("Loop(5) offMode is: ");
+
+              offMode == true ? Serial.println("True") : Serial.println("False");
+              TurnOnAfterCooling == true ? Serial.println("Loop(6) The device should be turned back on after cooling down.") : Serial.println("Loop(6) The device should NOT be turned back on after cooling down.");
+            }
+          }
+
+          if (SendSerialMessages)
+          {
+            TurnOnAfterCooling == true ? Serial.println("Loop(Power On?) The device should be turned back on after cooling down.") : Serial.println("Loop(Power On?) The device should NOT be turned back on after cooling down.");
+            ThermalShutdownTriggered ? Serial.print("Loop(Power On?) Thermal Shutdown has been triggered.") : Serial.println("Loop(Power On?) Thermal Shutdown has not been triggered.");
+            ThermalShutdownPhaseActive ? Serial.println("Loop(Power On?) Thermal Shutdown Phase is Power On?") : Serial.println("Loop(Power On?) Thermal Shutdown Phase is NOT active.");
+            TurnOnAfterCooling &&ThermalShutdownTriggered &&ThermalShutdownPhaseActive && (temperature <= (ShutDownTemp - SwitchHysteresis)) ? Serial.println("Loop(Power On?) The device should now turn on.") : Serial.println("Loop(Power On?) The device should stay off.");
+          }
+          //Only enter if the lights should be turned onn after the temperature has dropped.
+          //AND a thermal shutdown was triggered
+          //AND the thermal shutdown was triggered while the lights were on.
+          //AND the temperature has fallen below the shut off temprature AND the hysteresis
+          if (TurnOnAfterCooling && ThermalShutdownTriggered && ThermalShutdownPhaseActive && (temperature <= (ShutDownTemp - SwitchHysteresis)))
+          {
+            // DEBUG_PRINTLN(F("Temprature normal ."));
+            if (SendSerialMessages)
+            {
+              Serial.println("Loop(7) Temprature normal.");
+              Serial.print("Loop(8) offMode is: ");
+              offMode == true ? Serial.println("True") : Serial.println("False");
+            }
+            //Only toggle power state if the lights are out!
+            if (offMode)
+            {
+              toggleOnOff();
+              stateUpdated(CALL_MODE_BUTTON);
+              updateInterfaces(CALL_MODE_BUTTON);
+              ThermalShutdownTriggered = false;
+              ThermalShutdownPhaseActive = false;
+            }
+          }
+        }
+        // Daro Mod End
 
         // If temperature has changed since last measure, create string populated with device topic
         // from the UI and values read from sensor, then publish to broker
@@ -298,78 +406,105 @@ public:
     }
   }
 
-    /*
-     * API calls te enable data exchange between WLED modules
-     */
-    inline float getTemperatureC() {
-      if (UseCelsius) {
-        return (float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
-      } else {
-        return (float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) * 1.8f + 32;
-      }      
+  /*
+   * API calls te enable data exchange between WLED modules
+   */
+  inline float getTemperatureC()
+  {
+    if (UseCelsius)
+    {
+      return (float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
     }
+    else
+    {
+      return (float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) * 1.8f + 32;
+    }
+  }
 
-    inline float getTemperatureF() {
-      if (UseCelsius) {
-        return ((float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) -32) * 0.56f;
-      } else {
-        return (float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
-      }
+  inline float getTemperatureF()
+  {
+    if (UseCelsius)
+    {
+      return ((float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) - 32) * 0.56f;
     }
+    else
+    {
+      return (float)roundf(sensorTemperature * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
+    }
+  }
 
-    inline float getHumidity() {
-      return (float)roundf(sensorHumidity * powf(10, HumidityDecimals));
-    }
+  inline float getHumidity()
+  {
+    return (float)roundf(sensorHumidity * powf(10, HumidityDecimals));
+  }
 
-    inline float getPressure() {
-      return (float)roundf(sensorPressure * powf(10, PressureDecimals));
-    }
+  inline float getPressure()
+  {
+    return (float)roundf(sensorPressure * powf(10, PressureDecimals));
+  }
 
-    inline float getDewPointC() {
-      if (UseCelsius) {
-        return (float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
-      } else {
-        return (float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) * 1.8f + 32;
-      }
+  inline float getDewPointC()
+  {
+    if (UseCelsius)
+    {
+      return (float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
     }
+    else
+    {
+      return (float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) * 1.8f + 32;
+    }
+  }
 
-    inline float getDewPointF() {
-      if (UseCelsius) {
-        return ((float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) -32) * 0.56f;
-      } else {
-        return (float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
-      }
+  inline float getDewPointF()
+  {
+    if (UseCelsius)
+    {
+      return ((float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) - 32) * 0.56f;
     }
+    else
+    {
+      return (float)roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
+    }
+  }
 
-    inline float getHeatIndexC() {
-      if (UseCelsius) {
-        return (float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
-      } else {
-        return (float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) * 1.8f + 32;
-      }
+  inline float getHeatIndexC()
+  {
+    if (UseCelsius)
+    {
+      return (float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
     }
+    else
+    {
+      return (float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) * 1.8f + 32;
+    }
+  }
 
-    inline float getHeatIndexF() {
-      if (UseCelsius) {
-        return ((float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) -32) * 0.56f;
-      } else {
-        return (float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
-      }
+  inline float getHeatIndexF()
+  {
+    if (UseCelsius)
+    {
+      return ((float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals) - 32) * 0.56f;
     }
+    else
+    {
+      return (float)roundf(sensorHeatIndex * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals);
+    }
+  }
 
   // Publish Sensor Information to Info Page
   void addToJsonInfo(JsonObject &root)
   {
     JsonObject user = root[F("u")];
-    if (user.isNull()) user = root.createNestedObject(F("u"));
-    
-    if (sensorType==0) //No Sensor
+    if (user.isNull())
+      user = root.createNestedObject(F("u"));
+
+    if (sensorType == 0) // No Sensor
     {
       // if we sensor not detected, let the user know
       JsonArray temperature_json = user.createNestedArray(F("BME/BMP280 Sensor"));
       temperature_json.add(F("Not Found"));
     }
-    else if (sensorType==2) //BMP280
+    else if (sensorType == 2) // BMP280
     {
       JsonArray temperature_json = user.createNestedArray(F("Temperature"));
       JsonArray pressure_json = user.createNestedArray(F("Pressure"));
@@ -378,9 +513,15 @@ public:
       pressure_json.add(roundf(sensorPressure * powf(10, PressureDecimals)) / powf(10, PressureDecimals));
       pressure_json.add(F("hPa"));
     }
-    else if (sensorType==1) //BME280
+    else if (sensorType == 1) // BME280
     {
       JsonArray temperature_json = user.createNestedArray(F("Temperature"));
+      /*      if (OverTempSutdown)
+          {
+             JsonArray shutdown_temperature_json = user.createNestedArray(F("ShutdowntTemperature"));
+             shutdown_temperature_json.add(F(ShutDownTemp));
+           }
+           */
       JsonArray humidity_json = user.createNestedArray(F("Humidity"));
       JsonArray pressure_json = user.createNestedArray(F("Pressure"));
       JsonArray heatindex_json = user.createNestedArray(F("Heat Index"));
@@ -396,11 +537,12 @@ public:
       dewpoint_json.add(roundf(sensorDewPoint * powf(10, TemperatureDecimals)) / powf(10, TemperatureDecimals));
       dewpoint_json.add(tempScale);
     }
-      return;
+
+    return;
   }
 
   // Save Usermod Config Settings
-  void addToConfig(JsonObject& root)
+  void addToConfig(JsonObject &root)
   {
     JsonObject top = root.createNestedObject(FPSTR(_name));
     top[FPSTR(_enabled)] = enabled;
@@ -413,17 +555,41 @@ public:
     top[F("PublishAlways")] = PublishAlways;
     top[F("UseCelsius")] = UseCelsius;
     top[F("HomeAssistantDiscovery")] = HomeAssistantDiscovery;
+    // Daro Mod Begin
+    top[F("SendSerialMessages")] = SendSerialMessages;
+    top[F("EnableThermalShutdown")] = OverTempSutdownEnbled;
+    top[F("ThermalShutdownTemp")] = ShutDownTemp;
+    top[F("Turn light back on after cooling?")] = TurnOnAfterCooling;
+    if (UseCelsius)
+    {
+      top[F("Hysteresis-Degrees to drop before turning back on. (Min 3)")] = SwitchHysteresis;
+      if (SwitchHysteresis < 3)
+      {
+        SwitchHysteresis = 3;
+      }
+    }
+    else
+    {
+      top[F("Hysteresis-Degrees to drop before turning back on. (Min. 10)")] = SwitchHysteresis;
+
+      if (SwitchHysteresis < 10)
+      {
+        SwitchHysteresis = 10;
+      }
+    }
+    // Daro Mod End
     DEBUG_PRINTLN(F("BME280 config saved."));
   }
 
   // Read Usermod Config Settings
-  bool readFromConfig(JsonObject& root)
+  bool readFromConfig(JsonObject &root)
   {
     // default settings values could be set here (or below using the 3-argument getJsonValue()) instead of in the class definition or constructor
     // setting them inside readFromConfig() is slightly more robust, handling the rare but plausible use case of single value being missing after boot (e.g. if the cfg.json was manually edited and a value was removed)
 
     JsonObject top = root[FPSTR(_name)];
-    if (top.isNull()) {
+    if (top.isNull())
+    {
       DEBUG_PRINT(F(_name));
       DEBUG_PRINTLN(F(": No config found. (Using defaults.)"));
       return false;
@@ -444,12 +610,36 @@ public:
     configComplete &= getJsonValue(top[F("PublishAlways")], PublishAlways, false);
     configComplete &= getJsonValue(top[F("UseCelsius")], UseCelsius, true);
     configComplete &= getJsonValue(top[F("HomeAssistantDiscovery")], HomeAssistantDiscovery, false);
+    // Daro Mod Begin
+    configComplete &= getJsonValue(top[F("SendSerialMessages")], SendSerialMessages, false);
+    configComplete &= getJsonValue(top[F("EnableThermalShutdown")], OverTempSutdownEnbled, false);
+    if (UseCelsius)
+    {
+      configComplete &= getJsonValue(top[F("ThermalShutdownTemp")], ShutDownTemp, 55);
+    }
+    else
+    {
+      configComplete &= getJsonValue(top[F("ThermalShutdownTemp")], ShutDownTemp, 130);
+    }
+    configComplete &= getJsonValue(top[F("Turn light back on after cooling?")], TurnOnAfterCooling, false);
+    if (UseCelsius)
+    {
+      configComplete &= getJsonValue(top[F("Hysteresis-Degrees to drop before turning back on. (Min. 3)")], SwitchHysteresis, 3);
+    }
+    else
+    {
+      configComplete &= getJsonValue(top[F("Hysteresis-Degrees to drop before turning back on. (Min. 10)")], SwitchHysteresis, 10);
+    }
+    // Daro Mod End
 
     DEBUG_PRINT(FPSTR(_name));
-    if (!initDone) {
+    if (!initDone)
+    {
       // first run: reading from cfg.json
       DEBUG_PRINTLN(F(" config loaded."));
-    } else {
+    }
+    else
+    {
       // changing parameters from settings page
       DEBUG_PRINTLN(F(" config (re)loaded."));
 
@@ -465,17 +655,18 @@ public:
       lastHeatIndex = 0;
       lastDewPoint = 0;
       lastPressure = 0;
-      
+
       initializeBmeComms();
     }
 
     return configComplete;
   }
 
-  uint16_t getId() {
+  uint16_t getId()
+  {
     return USERMOD_ID_BME280;
   }
 };
 
-const char UsermodBME280::_name[]                      PROGMEM = "BME280/BMP280";
-const char UsermodBME280::_enabled[]                   PROGMEM = "enabled";
+const char UsermodBME280::_name[] PROGMEM = "BME280/BMP280";
+const char UsermodBME280::_enabled[] PROGMEM = "enabled";
